@@ -79,12 +79,13 @@ pub fn strip(in: []const u8, out: []u8, allocator: std.mem.Allocator) !usize {
     var newConstantPool = try allocator.alloc(ConstantPool, constantPoolCountPlusOne - 1);
     defer allocator.free(newConstantPool);
 
+    var codeAttribute: ?u16 = null;
+
     var constantPoolIndex: u16 = 0;
     while (constantPoolIndex < constantPoolCountPlusOne - 1) : (constantPoolIndex += 1) {
         const tag = inBuf.readIntBig(u8) catch return StripError.NotClassFile;
         const newConstantPoolIndex = constantPoolIndex - deletedConstants.items.len;
         if (tag == @enumToInt(Constants.Class)) {
-            // name_index
             const nameIndex = inBuf.readIntBig(u16) catch return StripError.NotClassFile;
             newConstantPool[newConstantPoolIndex] = ConstantPool{ .Class = .{ .index = nameIndex } };
         } else if (tag == @enumToInt(Constants.Fieldref) or tag == @enumToInt(Constants.Methodref) or tag == @enumToInt(Constants.InterfaceMethodref)) {
@@ -143,6 +144,9 @@ pub fn strip(in: []const u8, out: []u8, allocator: std.mem.Allocator) !usize {
                 try deletedConstants.append(constantPoolIndex + 1);
             } else {
                 newConstantPool[newConstantPoolIndex] = ConstantPool{ .Utf8 = bytes };
+                if (std.mem.eql(u8, bytes, "Code")) {
+                    codeAttribute = constantPoolIndex + 1;
+                }
             }
         } else if (tag == @enumToInt(Constants.MethodHandle)) {
             const reference_kind = inBuf.readIntBig(u8) catch return StripError.NotClassFile;
@@ -244,7 +248,7 @@ pub fn strip(in: []const u8, out: []u8, allocator: std.mem.Allocator) !usize {
         try updateIndexes(deletedConstants.items, @as(*[1]u16, &descriptor_index));
         outBuf.writeIntBig(u16, descriptor_index) catch return StripError.BufferTooSmall;
 
-        try processAttributes(deletedConstants.items, &fixedInBuf, &fixedOutBuf);
+        try processAttributes(deletedConstants.items, &fixedInBuf, &fixedOutBuf, codeAttribute);
     }
 
     const methodCount = inBuf.readIntBig(u16) catch return StripError.NotClassFile;
@@ -261,15 +265,15 @@ pub fn strip(in: []const u8, out: []u8, allocator: std.mem.Allocator) !usize {
         try updateIndexes(deletedConstants.items, @as(*[1]u16, &descriptor_index));
         outBuf.writeIntBig(u16, descriptor_index) catch return StripError.BufferTooSmall;
 
-        try processAttributes(deletedConstants.items, &fixedInBuf, &fixedOutBuf);
+        try processAttributes(deletedConstants.items, &fixedInBuf, &fixedOutBuf, codeAttribute);
     }
 
-    try processAttributes(deletedConstants.items, &fixedInBuf, &fixedOutBuf);
+    try processAttributes(deletedConstants.items, &fixedInBuf, &fixedOutBuf, codeAttribute);
 
     return fixedOutBuf.pos;
 }
 
-fn processAttributes(deletedConstants: []const u16, inBuf: *std.io.FixedBufferStream([]const u8), outBuf: *std.io.FixedBufferStream([]u8)) !void {
+fn processAttributes(deletedConstants: []const u16, inBuf: *std.io.FixedBufferStream([]const u8), outBuf: *std.io.FixedBufferStream([]u8), codeAttribute: ?u16) StripError!void {
     const reader = inBuf.reader();
     const writer = outBuf.writer();
 
@@ -286,20 +290,64 @@ fn processAttributes(deletedConstants: []const u16, inBuf: *std.io.FixedBufferSt
             return StripError.BufferTooSmall;
         }
 
+        const beginPos = inBuf.pos;
         if (!contains(deletedConstants, attribute_name_index)) {
+            const isCodeAttribute = codeAttribute == attribute_name_index;
             try updateIndexes(deletedConstants, @as(*[1]u16, &attribute_name_index));
             // not deleted
             writer.writeIntBig(u16, attribute_name_index) catch return StripError.BufferTooSmall;
+            const attributeLengthPosition = outBuf.pos;
             writer.writeIntBig(u32, attribute_length) catch return StripError.BufferTooSmall;
 
-            // TODO strip constants from Code attribute as well
-            writer.writeAll(inBuf.buffer[inBuf.pos .. inBuf.pos + attribute_length]) catch return StripError.BufferTooSmall;
+            // todo rewrite inner classes attribute
+            if (isCodeAttribute) {
+                const codePosition = outBuf.pos;
+
+                const max_stack = reader.readIntBig(u16) catch return StripError.NotClassFile;
+                writer.writeIntBig(u16, max_stack) catch return StripError.BufferTooSmall;
+
+                const max_locals = reader.readIntBig(u16) catch return StripError.NotClassFile;
+                writer.writeIntBig(u16, max_locals) catch return StripError.BufferTooSmall;
+
+                const code_length = reader.readIntBig(u32) catch return StripError.NotClassFile;
+                writer.writeIntBig(u32, code_length) catch return StripError.BufferTooSmall;
+
+                if (inBuf.pos + code_length > inBuf.getEndPos() catch unreachable) {
+                    return StripError.BufferTooSmall;
+                }
+                writer.writeAll(inBuf.buffer[inBuf.pos .. inBuf.pos + code_length]) catch return StripError.BufferTooSmall;
+                inBuf.seekTo(inBuf.pos + code_length) catch unreachable;
+
+                const exception_table_length = reader.readIntBig(u16) catch return StripError.NotClassFile;
+                writer.writeIntBig(u16, exception_table_length) catch return StripError.BufferTooSmall;
+
+                const exception_table_length_bytes = exception_table_length * 8; // todo adjust constant pool catch_type here
+                if (inBuf.pos + exception_table_length_bytes > inBuf.getEndPos() catch unreachable) {
+                    return StripError.BufferTooSmall;
+                }
+                writer.writeAll(inBuf.buffer[inBuf.pos .. inBuf.pos + exception_table_length_bytes]) catch return StripError.BufferTooSmall;
+                inBuf.seekTo(inBuf.pos + exception_table_length_bytes) catch unreachable;
+
+                try processAttributes(deletedConstants, inBuf, outBuf, null);
+
+                const newAttributeLength = @intCast(u32, outBuf.pos - codePosition);
+
+                const outBufPos = outBuf.pos;
+                outBuf.seekTo(attributeLengthPosition) catch unreachable;
+                // override length
+                writer.writeIntBig(u32, newAttributeLength) catch unreachable;
+                outBuf.seekTo(outBufPos) catch unreachable;
+
+                // buf will seek to correct place after the if statement
+            } else {
+                writer.writeAll(inBuf.buffer[inBuf.pos .. inBuf.pos + attribute_length]) catch return StripError.BufferTooSmall;
+            }
 
             attributesKeptCount += 1;
         } else {
             // deleted
         }
-        inBuf.seekTo(inBuf.pos + attribute_length) catch unreachable;
+        inBuf.seekTo(beginPos + attribute_length) catch unreachable;
     }
 
     const currentPosition = outBuf.getPos() catch unreachable;
