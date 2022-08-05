@@ -55,8 +55,6 @@ pub fn strip(in: []const u8, out: []u8, allocator: std.mem.Allocator) !usize {
     var fixedOutBuf = std.io.fixedBufferStream(out);
     const outBuf = fixedOutBuf.writer();
 
-    _ = outBuf;
-
     const magic = inBuf.readIntBig(u32) catch return StripError.NotClassFile;
     if (magic != CLASS_MAGIC) {
         return StripError.NotClassFile;
