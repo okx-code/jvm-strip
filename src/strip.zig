@@ -342,8 +342,6 @@ fn processAttributes(deletedConstants: []const u16, inBuf: *std.io.FixedBufferSt
                 // override length
                 writer.writeIntBig(u32, newAttributeLength) catch unreachable;
                 outBuf.seekTo(outBufPos) catch unreachable;
-
-                // buf will seek to correct place after the if statement
             } else {
                 writer.writeAll(inBuf.buffer[inBuf.pos .. inBuf.pos + attribute_length]) catch return StripError.BufferTooSmall;
             }
