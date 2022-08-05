@@ -1,6 +1,6 @@
 ## jvm-strip
 
-Tool to remove optional debugging attributes from class files to reduce class size.
+Tool to remove optional debugging attributes from class files to reduce class size. This process can reduce class size by 25% uncompressed.
 
 Deletes the following attributes from class files: 
 - SourceFile
