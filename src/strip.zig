@@ -68,6 +68,8 @@ pub fn strip(in: []const u8, out: []u8, allocator: std.mem.Allocator) !usize {
     const major = inBuf.readIntBig(u16) catch return StripError.NotClassFile;
     outBuf.writeIntBig(u16, major) catch return StripError.BufferTooSmall;
 
+    // step 1. copy the constant pool into a dynamic array, remove undesired constants and record their index
+
     const constantPoolCountPlusOne = inBuf.readIntBig(u16) catch return StripError.NotClassFile;
     if (constantPoolCountPlusOne < 1) {
         return StripError.NotClassFile;
@@ -175,7 +177,8 @@ pub fn strip(in: []const u8, out: []u8, allocator: std.mem.Allocator) !usize {
         }
     }
 
-    // Update Indexes
+    // step 2. write the new constant pool back out with the indexes adjusted to not include the deletede ones
+
     const realNewConstantPool = newConstantPool[0 .. newConstantPool.len - deletedConstants.items.len];
     outBuf.writeIntBig(u16, @intCast(u16, realNewConstantPool.len + 1)) catch return StripError.BufferTooSmall;
     for (realNewConstantPool) |*constantPool| {
@@ -226,6 +229,8 @@ pub fn strip(in: []const u8, out: []u8, allocator: std.mem.Allocator) !usize {
 
     const interfacesCount = inBuf.readIntBig(u16) catch return StripError.NotClassFile;
     outBuf.writeIntBig(u16, interfacesCount) catch return StripError.BufferTooSmall;
+
+    // step 3. rewrite usages of the constant pool on the field, methods, class, and interface
 
     var interfacesIndex: u16 = 0;
     while (interfacesIndex < interfacesCount) : (interfacesIndex += 1) {
@@ -301,6 +306,8 @@ fn processAttributes(deletedConstants: []const u16, inBuf: *std.io.FixedBufferSt
 
             // todo rewrite inner classes attribute
             if (isCodeAttribute) {
+                // The Code attribute can recursively contain attributes so it neeeds special parsing
+
                 const codePosition = outBuf.pos;
 
                 const max_stack = reader.readIntBig(u16) catch return StripError.NotClassFile;
