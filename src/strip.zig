@@ -39,15 +39,27 @@ const Constants = enum(u8) {
 
 const ConstantPool = union(Constants) { Class: SingleIndex, Fieldref: DoubleIndex, Methodref: DoubleIndex, InterfaceMethodref: DoubleIndex, String: SingleIndex, Integer: u32, Float: u32, Long: u64, Double: u64, NameAndType: DoubleIndex, Utf8: []const u8, MethodHandle: MethodHandle, MethodType: SingleIndex, Dynamic: DoubleIndex, InvokeDynamic: DoubleIndex, Module: SingleIndex, Package: SingleIndex };
 
-const CLASS_MAGIC: u32 = 0xCAFEBABE;
+//    var runtimeVisibleAnnotationAttribute: ?u16 = null;
+//    var runtimeVisibleParameterAnnotationsAttribute: ?u16 = null;
+// Attributes that contain other attributes, where the index in the constant pool needs to be
+// recorded so that they can be rewritten.
+// Initialised to 0 which doesn't exist in the constant pool because it starts at 1
+const ConstantPoolAttributes = struct {
+    constantValue: u16 = 0,
+    code: u16 = 0,
+    exceptions: u16 = 0,
+    innerClasses: u16 = 0,
+    enclosingMethod: u16 = 0,
+    signature: u16 = 0,
+    runtimeVisibleAnnotations: u16 = 0,
+    runtimeInvisibleAnnotations: u16 = 0,
+    runtimeVisibleParameterAnnotations: u16 = 0,
+    runtimeInvisibleParameterAnnotations: u16 = 0,
+    annotationDefault: u16 = 0,
+    boostrapMethods: u16 = 0,
+};
 
-// Optional attributes that will be stripped
-const SourceFile_attribute = "SourceFile";
-const SourceDebugExtension_attribute = "SourceDebugExtension";
-const LineNumberTable_attribute = "LineNumberTable";
-const LocalVariableTable_attribute = "LocalVariableTable";
-const LocalVariableTypeTable_attribute = "LocalVariableTypeTable";
-const Deprecated_attribute = "Deprecated";
+const CLASS_MAGIC: u32 = 0xCAFEBABE;
 
 pub fn strip(in: []const u8, out: []u8, allocator: std.mem.Allocator) !usize {
     var fixedInBuf = std.io.fixedBufferStream(in);
@@ -79,7 +91,8 @@ pub fn strip(in: []const u8, out: []u8, allocator: std.mem.Allocator) !usize {
     var newConstantPool = try allocator.alloc(ConstantPool, constantPoolCountPlusOne - 1);
     defer allocator.free(newConstantPool);
 
-    var codeAttribute: ?u16 = null;
+    var attributes = ConstantPoolAttributes{};
+    _ = attributes;
 
     var constantPoolIndex: u16 = 0;
     while (constantPoolIndex < constantPoolCountPlusOne - 1) : (constantPoolIndex += 1) {
@@ -130,22 +143,44 @@ pub fn strip(in: []const u8, out: []u8, allocator: std.mem.Allocator) !usize {
             if (pos + length >= in.len) return StripError.NotClassFile;
             fixedInBuf.seekTo(pos + length) catch unreachable;
             const bytes = in[pos .. pos + length];
-            if (std.mem.eql(u8, bytes, SourceFile_attribute)) {
+            if (std.mem.eql(u8, bytes, "SourceFile")) {
                 try deletedConstants.append(constantPoolIndex + 1);
-            } else if (std.mem.eql(u8, bytes, SourceDebugExtension_attribute)) {
+            } else if (std.mem.eql(u8, bytes, "SourceDebugExtension")) {
                 try deletedConstants.append(constantPoolIndex + 1);
-            } else if (std.mem.eql(u8, bytes, LineNumberTable_attribute)) {
+            } else if (std.mem.eql(u8, bytes, "LineNumberTable")) {
                 try deletedConstants.append(constantPoolIndex + 1);
-            } else if (std.mem.eql(u8, bytes, LocalVariableTable_attribute)) {
+            } else if (std.mem.eql(u8, bytes, "LocalVariableTable")) {
                 try deletedConstants.append(constantPoolIndex + 1);
-            } else if (std.mem.eql(u8, bytes, LocalVariableTypeTable_attribute)) {
+            } else if (std.mem.eql(u8, bytes, "LocalVariableTypeTable")) {
                 try deletedConstants.append(constantPoolIndex + 1);
-            } else if (std.mem.eql(u8, bytes, Deprecated_attribute)) {
+            } else if (std.mem.eql(u8, bytes, "Deprecated")) {
                 try deletedConstants.append(constantPoolIndex + 1);
             } else {
                 newConstantPool[newConstantPoolIndex] = ConstantPool{ .Utf8 = bytes };
-                if (std.mem.eql(u8, bytes, "Code")) {
-                    codeAttribute = constantPoolIndex + 1;
+                if (std.mem.eql(u8, bytes, "ConstantValue")) {
+                    attributes.constantValue = constantPoolIndex + 1;
+                } else if (std.mem.eql(u8, bytes, "Code")) {
+                    attributes.code = constantPoolIndex + 1;
+                } else if (std.mem.eql(u8, bytes, "Exceptions")) {
+                    attributes.exceptions = constantPoolIndex + 1;
+                } else if (std.mem.eql(u8, bytes, "InnerClasses")) {
+                    attributes.innerClasses = constantPoolIndex + 1;
+                } else if (std.mem.eql(u8, bytes, "EnclosingMethod")) {
+                    attributes.enclosingMethod = constantPoolIndex + 1;
+                } else if (std.mem.eql(u8, bytes, "Signature")) {
+                    attributes.signature = constantPoolIndex + 1;
+                } else if (std.mem.eql(u8, bytes, "RuntimeVisibleAnnotations")) {
+                    attributes.runtimeVisibleAnnotations = constantPoolIndex + 1;
+                } else if (std.mem.eql(u8, bytes, "RuntimeInvisibleAnnotations")) {
+                    attributes.runtimeInvisibleAnnotations = constantPoolIndex + 1;
+                } else if (std.mem.eql(u8, bytes, "RuntimeVisibleParameterAnnotations")) {
+                    attributes.runtimeVisibleParameterAnnotations = constantPoolIndex + 1;
+                } else if (std.mem.eql(u8, bytes, "RuntimeInvisibleParameterAnnotations")) {
+                    attributes.runtimeInvisibleParameterAnnotations = constantPoolIndex + 1;
+                } else if (std.mem.eql(u8, bytes, "AnnotationDefault")) {
+                    attributes.annotationDefault = constantPoolIndex + 1;
+                } else if (std.mem.eql(u8, bytes, "BoostrapMethods")) {
+                    attributes.boostrapMethods = constantPoolIndex + 1;
                 }
             }
         } else if (tag == @enumToInt(Constants.MethodHandle)) {
@@ -174,6 +209,8 @@ pub fn strip(in: []const u8, out: []u8, allocator: std.mem.Allocator) !usize {
             return StripError.NotClassFile;
         }
     }
+
+    std.sort.sort(u16, deletedConstants.items, {}, comptime std.sort.desc(u16));
 
     // step 2. write the new constant pool back out with the indexes adjusted to not include the deletede ones
 
@@ -251,7 +288,7 @@ pub fn strip(in: []const u8, out: []u8, allocator: std.mem.Allocator) !usize {
         try updateIndexes(deletedConstants.items, @as(*[1]u16, &descriptor_index));
         outBuf.writeIntBig(u16, descriptor_index) catch return StripError.BufferTooSmall;
 
-        try processAttributes(deletedConstants.items, &fixedInBuf, &fixedOutBuf, codeAttribute);
+        try processAttributes(deletedConstants.items, &fixedInBuf, &fixedOutBuf, attributes);
     }
 
     const methodCount = inBuf.readIntBig(u16) catch return StripError.NotClassFile;
@@ -268,15 +305,15 @@ pub fn strip(in: []const u8, out: []u8, allocator: std.mem.Allocator) !usize {
         try updateIndexes(deletedConstants.items, @as(*[1]u16, &descriptor_index));
         outBuf.writeIntBig(u16, descriptor_index) catch return StripError.BufferTooSmall;
 
-        try processAttributes(deletedConstants.items, &fixedInBuf, &fixedOutBuf, codeAttribute);
+        try processAttributes(deletedConstants.items, &fixedInBuf, &fixedOutBuf, attributes);
     }
 
-    try processAttributes(deletedConstants.items, &fixedInBuf, &fixedOutBuf, codeAttribute);
+    try processAttributes(deletedConstants.items, &fixedInBuf, &fixedOutBuf, attributes);
 
     return fixedOutBuf.pos;
 }
 
-fn processAttributes(deletedConstants: []const u16, inBuf: *std.io.FixedBufferStream([]const u8), outBuf: *std.io.FixedBufferStream([]u8), codeAttribute: ?u16) StripError!void {
+fn processAttributes(deletedConstants: []const u16, inBuf: *std.io.FixedBufferStream([]const u8), outBuf: *std.io.FixedBufferStream([]u8), attributes: ConstantPoolAttributes) StripError!void {
     const reader = inBuf.reader();
     const writer = outBuf.writer();
 
@@ -295,17 +332,18 @@ fn processAttributes(deletedConstants: []const u16, inBuf: *std.io.FixedBufferSt
 
         const beginPos = inBuf.pos;
         if (!contains(deletedConstants, attribute_name_index)) {
-            const isCodeAttribute = codeAttribute == attribute_name_index;
+            const attribute = attribute_name_index;
             try updateIndexes(deletedConstants, @as(*[1]u16, &attribute_name_index));
-            // not deleted
             writer.writeIntBig(u16, attribute_name_index) catch return StripError.BufferTooSmall;
             const attributeLengthPosition = outBuf.pos;
             writer.writeIntBig(u32, attribute_length) catch return StripError.BufferTooSmall;
 
-            // todo rewrite inner classes attribute
-            if (isCodeAttribute) {
-                // The Code attribute can recursively contain attributes so it neeeds special parsing
-
+            // handle recursive attributes
+            if (attributes.constantValue == attribute) {
+                var index = reader.readIntBig(u16) catch return StripError.NotClassFile;
+                try updateIndexes(deletedConstants, @as(*[1]u16, &index));
+                writer.writeIntBig(u16, index) catch return StripError.BufferTooSmall;
+            } else if (attributes.code == attribute) {
                 const codePosition = outBuf.pos;
 
                 const max_stack = reader.readIntBig(u16) catch return StripError.NotClassFile;
@@ -333,7 +371,7 @@ fn processAttributes(deletedConstants: []const u16, inBuf: *std.io.FixedBufferSt
                 writer.writeAll(inBuf.buffer[inBuf.pos .. inBuf.pos + exception_table_length_bytes]) catch return StripError.BufferTooSmall;
                 inBuf.seekTo(inBuf.pos + exception_table_length_bytes) catch unreachable;
 
-                try processAttributes(deletedConstants, inBuf, outBuf, null);
+                try processAttributes(deletedConstants, inBuf, outBuf, attributes);
 
                 const newAttributeLength = @intCast(u32, outBuf.pos - codePosition);
 
@@ -342,6 +380,22 @@ fn processAttributes(deletedConstants: []const u16, inBuf: *std.io.FixedBufferSt
                 // override length
                 writer.writeIntBig(u32, newAttributeLength) catch unreachable;
                 outBuf.seekTo(outBufPos) catch unreachable;
+            } else if (attributes.exceptions == attribute) {
+                const exceptions = reader.readIntBig(u16) catch return StripError.NotClassFile;
+                writer.writeIntBig(u16, exceptions) catch return StripError.BufferTooSmall;
+                var exceptionIndex: u16 = 0;
+                while (exceptionIndex < exceptions) : (exceptionIndex += 1) {
+                    var exceptionConstant = reader.readIntBig(u16) catch return StripError.NotClassFile;
+                    try updateIndexes(deletedConstants, @as(*[1]u16, &exceptionConstant));
+                    writer.writeIntBig(u16, exceptionConstant) catch return StripError.BufferTooSmall;
+                }
+            } else if (attributes.runtimeVisibleAnnotations == attribute or attributes.runtimeInvisibleAnnotations == attribute) {
+                const annotations = reader.readIntBig(u16) catch return StripError.NotClassFile;
+                writer.writeIntBig(u16, annotations) catch return StripError.BufferTooSmall;
+                var annotationIndex: u16 = 0;
+                while (annotationIndex < annotations) : (annotationIndex += 1) {
+                    try rewriteAnnotation(deletedConstants, inBuf, outBuf);
+                }
             } else {
                 writer.writeAll(inBuf.buffer[inBuf.pos .. inBuf.pos + attribute_length]) catch return StripError.BufferTooSmall;
             }
@@ -357,6 +411,61 @@ fn processAttributes(deletedConstants: []const u16, inBuf: *std.io.FixedBufferSt
     outBuf.seekTo(attributeCountWritePos) catch unreachable;
     writer.writeIntBig(u16, attributesKeptCount) catch unreachable;
     outBuf.seekTo(currentPosition) catch unreachable;
+}
+
+fn rewriteAnnotation(deletedConstants: []const u16, inBuf: *std.io.FixedBufferStream([]const u8), outBuf: *std.io.FixedBufferStream([]u8)) StripError!void {
+    const reader = inBuf.reader();
+    const writer = outBuf.writer();
+
+    var type_index = reader.readIntBig(u16) catch return StripError.NotClassFile;
+    try updateIndexes(deletedConstants, @as(*[1]u16, &type_index));
+    writer.writeIntBig(u16, type_index) catch return StripError.BufferTooSmall;
+
+    const num_element_value_pairs = reader.readIntBig(u16) catch return StripError.NotClassFile;
+    writer.writeIntBig(u16, num_element_value_pairs) catch return StripError.BufferTooSmall;
+    var pairIndex: u16 = 0;
+    while (num_element_value_pairs < pairIndex) : (pairIndex += 1) {
+        var element_name_index = reader.readIntBig(u16) catch return StripError.NotClassFile;
+        try updateIndexes(deletedConstants, @as(*[1]u16, &element_name_index));
+        writer.writeIntBig(u16, element_name_index) catch return StripError.BufferTooSmall;
+
+        try rewriteElementValue(deletedConstants, inBuf, outBuf);
+    }
+}
+
+fn rewriteElementValue(deletedConstants: []const u16, inBuf: *std.io.FixedBufferStream([]const u8), outBuf: *std.io.FixedBufferStream([]u8)) StripError!void {
+    const reader = inBuf.reader();
+    const writer = outBuf.writer();
+    const tag = reader.readIntBig(u8) catch return StripError.NotClassFile;
+    writer.writeIntBig(u8, tag) catch return StripError.BufferTooSmall;
+    switch (tag) {
+        'B', 'C', 'D', 'F', 'I', 'J', 'S', 'Z', 's', 'c' => {
+            var index = reader.readIntBig(u16) catch return StripError.NotClassFile;
+            try updateIndexes(deletedConstants, @as(*[1]u16, &index));
+            writer.writeIntBig(u16, index) catch return StripError.BufferTooSmall;
+        },
+        'e' => {
+            var type_name_index = reader.readIntBig(u16) catch return StripError.NotClassFile;
+            var const_name_index = reader.readIntBig(u16) catch return StripError.NotClassFile;
+            try updateIndexes(deletedConstants, @as(*[1]u16, &type_name_index));
+            try updateIndexes(deletedConstants, @as(*[1]u16, &const_name_index));
+            writer.writeIntBig(u16, type_name_index) catch return StripError.BufferTooSmall;
+            writer.writeIntBig(u16, const_name_index) catch return StripError.BufferTooSmall;
+        },
+        '@' => {
+            std.debug.panic("todo", .{});
+        },
+        '[' => {
+            const num_values = reader.readIntBig(u16) catch return StripError.NotClassFile;
+            var valueIndex: u16 = 0;
+            while (valueIndex < num_values) : (valueIndex += 1) {
+                try rewriteElementValue(deletedConstants, inBuf, outBuf);
+            }
+        },
+        else => {
+            return StripError.NotClassFile;
+        },
+    }
 }
 
 fn contains(deletedConstants: []const u16, search: u16) bool {
