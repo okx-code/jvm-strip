@@ -3,12 +3,9 @@ const strip = @import("strip.zig");
 
 const gpa = std.testing.allocator;
 
-test "deprecated annotation is stripped" {
+test "lines are stripped" {
     // The TestLineStrip class tests if the line numbers have been stripped by checking
     // the stack trace.
-    // if (new Throwable().getStackTrace()[0].getLineNumber() >= 0) {
-    //    throw new IllegalStateException("Line numbers not stripepd!");
-    // }
 
     const TestLineStrip_name_java = "TestLineStrip";
     const TestLineStrip_name_file = TestLineStrip_name_java ++ ".class";
